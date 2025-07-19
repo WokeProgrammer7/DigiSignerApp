@@ -21,7 +21,10 @@ from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography import x509
-import pkcs11  # For USB token support
+try:
+    import pkcs11  # For USB token support
+except ImportError:
+    pkcs11 = None
 
 # Initialize session state
 if 'signing_history' not in st.session_state:
@@ -45,6 +48,10 @@ class USBTokenManager:
     
     def detect_tokens(self) -> List[dict]:
         """Detect available USB DSC tokens"""
+        if pkcs11 is None:
+            st.error("PKCS11 library not installed. Install with: pip install python-pkcs11")
+            return []
+            
         try:
             # Common PKCS#11 library paths for different vendors
             lib_paths = [
@@ -92,6 +99,10 @@ class USBTokenManager:
     
     def load_token_certificate(self, token_info: dict, pin: str) -> Tuple[Optional[object], Optional[object]]:
         """Load certificate and private key from USB token"""
+        if pkcs11 is None:
+            st.error("PKCS11 library not installed")
+            return None, None
+            
         try:
             lib = pkcs11.lib(token_info['lib_path'])
             token = lib.get_token(token_label=token_info['token_label'])
@@ -121,22 +132,13 @@ class USBTokenManager:
                     st.error("No private keys found on token")
                     return None, None
                 
-                # For USB tokens, we need to create a PKCS11 signer
-                # This is a simplified approach - in production you'd need more robust key matching
                 private_key = private_keys[0]
-                
                 return certificate, private_key
                 
         except Exception as e:
             st.error(f"Error loading token certificate: {str(e)}")
             return None, None
-    """Handles certificate loading and validation"""
-    
-    def __init__(self):
-        self.certificate = None
-        self.private_key = None
-        self.cert_info = {}
-    
+
 class CertificateManager:
     """Handles certificate loading and validation for various sources"""
     
@@ -171,16 +173,10 @@ class CertificateManager:
             self.cert_info = self._extract_cert_info(certificate)
             self.cert_source = 'pfx'
             
-            # Add debug info
-            st.success(f"Certificate loaded: {type(certificate).__name__}")
-            st.info(f"Private key type: {type(private_key).__name__}")
-            
             return True
             
         except Exception as e:
             st.error(f"Failed to load certificate: {str(e)}")
-            import traceback
-            st.error(f"Detailed error: {traceback.format_exc()}")
             return False
     
     def load_usb_token_certificate(self, token_info: dict, pin: str) -> bool:
@@ -193,8 +189,6 @@ class CertificateManager:
                 self.private_key = private_key
                 self.cert_info = self._extract_cert_info(certificate)
                 self.cert_source = 'usb_token'
-                
-                st.success("USB Token certificate loaded successfully!")
                 return True
             else:
                 return False
@@ -265,18 +259,21 @@ class SignatureStamp:
             
             # Mark image areas as occupied
             for img_index in image_list:
-                img_rect = page.get_image_bbox(img_index)
-                if img_rect:
-                    x0, y0, x1, y1 = img_rect
-                    gx0 = max(0, int(x0 / grid_size))
-                    gy0 = max(0, int(y0 / grid_size))
-                    gx1 = min(grid_width - 1, int(x1 / grid_size))
-                    gy1 = min(grid_height - 1, int(y1 / grid_size))
-                    
-                    for gy in range(gy0, gy1 + 1):
-                        for gx in range(gx0, gx1 + 1):
-                            if 0 <= gy < grid_height and 0 <= gx < grid_width:
-                                occupied_grid[gy][gx] = True
+                try:
+                    img_rect = page.get_image_bbox(img_index)
+                    if img_rect:
+                        x0, y0, x1, y1 = img_rect
+                        gx0 = max(0, int(x0 / grid_size))
+                        gy0 = max(0, int(y0 / grid_size))
+                        gx1 = min(grid_width - 1, int(x1 / grid_size))
+                        gy1 = min(grid_height - 1, int(y1 / grid_size))
+                        
+                        for gy in range(gy0, gy1 + 1):
+                            for gx in range(gx0, gx1 + 1):
+                                if 0 <= gy < grid_height and 0 <= gx < grid_width:
+                                    occupied_grid[gy][gx] = True
+                except:
+                    continue
             
             # Find the best position for signature (prefer bottom-right)
             stamp_grid_width = int(self.stamp_width / grid_size) + 1
@@ -468,7 +465,6 @@ class PDFSigner:
             # Import required modules
             from pyhanko.sign import signers
             from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
-            from pyhanko.sign.fields import SigFieldSpec, append_signature_field
             from pyhanko.sign.signers import PdfSignatureMetadata
             
             # Create signer - try different approaches for compatibility
@@ -481,19 +477,14 @@ class PDFSigner:
                 )
             except Exception:
                 try:
-                    # Method 2: Using load method with different parameters
-                    signer = signers.SimpleSigner.load_pkcs12(
-                        pfx_data=None,  # We'll set cert/key directly
-                        passphrase=None
-                    )
-                    signer.signing_cert = self.cert_manager.certificate
-                    signer.signing_key = self.cert_manager.private_key
-                except Exception:
-                    # Method 3: Fallback - create minimal signer
+                    # Method 2: Fallback - create minimal signer
                     signer = signers.SimpleSigner(
                         signing_cert=self.cert_manager.certificate,
                         signing_key=self.cert_manager.private_key
                     )
+                except Exception as e:
+                    st.warning(f"Could not create digital signer: {str(e)}. Using visual signature only.")
+                    return self._apply_simple_signature(pdf_path, output_path)
             
             # Read and prepare PDF
             with open(pdf_path, 'rb') as inf:
@@ -521,8 +512,8 @@ class PDFSigner:
             return True
             
         except Exception as e:
-            # If pyHanko fails, try alternative approach with reportlab
-            st.warning(f"PyHanko signing failed: {str(e)}. Trying alternative method...")
+            # If pyHanko fails, try alternative approach
+            st.warning(f"PyHanko signing failed: {str(e)}. Using visual signature only.")
             return self._apply_simple_signature(pdf_path, output_path)
     
     def _apply_simple_signature(self, pdf_path: str, output_path: str) -> bool:
@@ -531,7 +522,6 @@ class PDFSigner:
             import shutil
             
             # For now, just copy the file with visual signature
-            # In production, you might want to use a different signing library
             shutil.copy2(pdf_path, output_path)
             
             st.info("Applied visual signature. For full cryptographic signing, please check your certificate format.")
@@ -598,6 +588,11 @@ def main():
     cert_manager = st.session_state.cert_manager
     pdf_signer = PDFSigner(cert_manager)
     
+    # Default values for positioning
+    pos_x = 70
+    pos_y = 10
+    prefer_last_page = True
+    
     # Sidebar for controls
     with st.sidebar:
         st.header("⚙️ Signature Settings")
@@ -606,7 +601,7 @@ def main():
         st.subheader("Certificate Type")
         cert_type = st.radio(
             "Choose certificate source:",
-            ["PFX/P12 Certificate (eMudhra DSC)", "USB DSC Token (Watchdata/eMudhra)", "Manual Position"],
+            ["PFX/P12 Certificate (eMudhra DSC)", "USB DSC Token (Watchdata/eMudhra)"],
             help="Select your certificate source"
         )
         
@@ -634,31 +629,6 @@ def main():
                         st.success("✅ Certificate loaded successfully!")
                         st.rerun()  # Refresh to show certificate info
             
-            # Display certificate status and info
-            if st.session_state.certificate_loaded and st.session_state.cert_info:
-                st.success("✅ Certificate is loaded and ready!")
-                
-                # Display certificate info
-                with st.expander("Certificate Information", expanded=True):
-                    st.write(f"**Subject:** {st.session_state.cert_info.get('subject_cn', 'N/A')}")
-                    st.write(f"**Issuer:** {st.session_state.cert_info.get('issuer_cn', 'N/A')}")
-                    st.write(f"**Serial:** {st.session_state.cert_info.get('serial_number', 'N/A')}")
-                    st.write(f"**Valid From:** {st.session_state.cert_info.get('not_valid_before', 'N/A')}")
-                    st.write(f"**Valid Until:** {st.session_state.cert_info.get('not_valid_after', 'N/A')}")
-                    
-                    if st.session_state.cert_info.get('is_valid'):
-                        st.success("Certificate is valid ✅")
-                    else:
-                        st.error("Certificate is expired or not yet valid ❌")
-                
-                # Add button to clear certificate
-                if st.button("🗑️ Clear Certificate"):
-                    st.session_state.certificate_loaded = False
-                    st.session_state.cert_info = {}
-                    st.session_state.cert_manager = None
-                    st.success("Certificate cleared!")
-                    st.rerun()
-                    
         elif cert_type == "USB DSC Token (Watchdata/eMudhra)":
             st.info("🔌 Connect your USB DSC token and ensure drivers are installed")
             
@@ -696,36 +666,33 @@ def main():
                     if cert_manager.load_usb_token_certificate(selected_token, token_pin):
                         st.session_state.certificate_loaded = True
                         st.session_state.cert_info = cert_manager.cert_info
-                        st.rerun()
-        else:
-            st.info("Manual positioning mode - you can set exact signature coordinates") cert_manager.cert_info
                         st.success("✅ Certificate loaded successfully!")
-                        st.rerun()  # Refresh to show certificate info
+                        st.rerun()
+        
+        # Display certificate status and info
+        if st.session_state.certificate_loaded and st.session_state.cert_info:
+            st.success("✅ Certificate is loaded and ready!")
             
-            # Display certificate status and info
-            if st.session_state.certificate_loaded and st.session_state.cert_info:
-                st.success("✅ Certificate is loaded and ready!")
+            # Display certificate info
+            with st.expander("Certificate Information", expanded=True):
+                st.write(f"**Subject:** {st.session_state.cert_info.get('subject_cn', 'N/A')}")
+                st.write(f"**Issuer:** {st.session_state.cert_info.get('issuer_cn', 'N/A')}")
+                st.write(f"**Serial:** {st.session_state.cert_info.get('serial_number', 'N/A')}")
+                st.write(f"**Valid From:** {st.session_state.cert_info.get('not_valid_before', 'N/A')}")
+                st.write(f"**Valid Until:** {st.session_state.cert_info.get('not_valid_after', 'N/A')}")
                 
-                # Display certificate info
-                with st.expander("Certificate Information", expanded=True):
-                    st.write(f"**Subject:** {st.session_state.cert_info.get('subject_cn', 'N/A')}")
-                    st.write(f"**Issuer:** {st.session_state.cert_info.get('issuer_cn', 'N/A')}")
-                    st.write(f"**Serial:** {st.session_state.cert_info.get('serial_number', 'N/A')}")
-                    st.write(f"**Valid From:** {st.session_state.cert_info.get('not_valid_before', 'N/A')}")
-                    st.write(f"**Valid Until:** {st.session_state.cert_info.get('not_valid_after', 'N/A')}")
-                    
-                    if st.session_state.cert_info.get('is_valid'):
-                        st.success("Certificate is valid ✅")
-                    else:
-                        st.error("Certificate is expired or not yet valid ❌")
-                
-                # Add button to clear certificate
-                if st.button("🗑️ Clear Certificate"):
-                    st.session_state.certificate_loaded = False
-                    st.session_state.cert_info = {}
-                    st.session_state.cert_manager = None
-                    st.success("Certificate cleared!")
-                    st.rerun()
+                if st.session_state.cert_info.get('is_valid'):
+                    st.success("Certificate is valid ✅")
+                else:
+                    st.error("Certificate is expired or not yet valid ❌")
+            
+            # Add button to clear certificate
+            if st.button("🗑️ Clear Certificate"):
+                st.session_state.certificate_loaded = False
+                st.session_state.cert_info = {}
+                st.session_state.cert_manager = None
+                st.success("Certificate cleared!")
+                st.rerun()
         
         st.divider()
         
@@ -861,8 +828,26 @@ def main():
                 # Reset file pointer
                 pdf_file.seek(0)
                 
+                # Determine positioning parameters
+                use_smart_position = positioning_mode == "🤖 Smart Auto-Position"
+                
+                # Set position variables based on mode
+                if use_smart_position:
+                    manual_position = None
+                    sign_last_only = prefer_last_page
+                else:
+                    # Manual position mode - use the slider values
+                    manual_position = (pos_x, pos_y)
+                    sign_last_only = prefer_last_page
+                
                 # Sign PDF
-                signed_pdf = pdf_signer.sign_pdf(pdf_file, stamp_image, (pos_x, pos_y))
+                signed_pdf = pdf_signer.sign_pdf(
+                    pdf_file, 
+                    stamp_image, 
+                    manual_position, 
+                    use_smart_position, 
+                    sign_last_only
+                )
                 
                 if signed_pdf:
                     signed_files.append({
@@ -936,7 +921,7 @@ def main():
     st.divider()
     st.markdown("""
     <div style='text-align: center; color: gray;'>
-        <p>Multi-PDF Digital Signer v1.0 | Secure document signing with cryptographic certificates</p>
+        <p>Multi-PDF Digital Signer v2.0 | Secure document signing with cryptographic certificates</p>
         <p><small>⚠️ Always verify your certificates and keep them secure</small></p>
     </div>
     """, unsafe_allow_html=True)
