@@ -1,0 +1,16 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+
+# Streamlit and temporary files
+*.png
+*.pfx
+*.p12
+temp*
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# History log
+signature_history.json
