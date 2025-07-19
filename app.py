@@ -698,14 +698,12 @@ def main():
                         st.session_state.cert_info = cert_manager.cert_info
                         st.rerun()
         else:
-            st.info("Manual positioning mode - you can set exact signature coordinates") cert_manager.cert_info
-                        st.success("✅ Certificate loaded successfully!")
-                        st.rerun()  # Refresh to show certificate info
-            
-            # Display certificate status and info
+            st.info("Manual positioning mode - you can set exact signature coordinates")
+
+            # Display certificate status and info if a certificate has been loaded
             if st.session_state.certificate_loaded and st.session_state.cert_info:
                 st.success("✅ Certificate is loaded and ready!")
-                
+
                 # Display certificate info
                 with st.expander("Certificate Information", expanded=True):
                     st.write(f"**Subject:** {st.session_state.cert_info.get('subject_cn', 'N/A')}")
@@ -713,12 +711,12 @@ def main():
                     st.write(f"**Serial:** {st.session_state.cert_info.get('serial_number', 'N/A')}")
                     st.write(f"**Valid From:** {st.session_state.cert_info.get('not_valid_before', 'N/A')}")
                     st.write(f"**Valid Until:** {st.session_state.cert_info.get('not_valid_after', 'N/A')}")
-                    
+
                     if st.session_state.cert_info.get('is_valid'):
                         st.success("Certificate is valid ✅")
                     else:
                         st.error("Certificate is expired or not yet valid ❌")
-                
+
                 # Add button to clear certificate
                 if st.button("🗑️ Clear Certificate"):
                     st.session_state.certificate_loaded = False
@@ -854,15 +852,29 @@ def main():
                 st.error("Failed to create signature stamp")
                 st.stop()
             
+            # Determine signing parameters based on positioning mode
+            if positioning_mode == "🤖 Smart Auto-Position":
+                position = None
+                smart_pos = True
+            else:
+                position = (pos_x, pos_y)
+                smart_pos = False
+
             # Sign each file
             for i, pdf_file in enumerate(uploaded_files):
                 status_text.text(f"Signing {pdf_file.name}...")
-                
+
                 # Reset file pointer
                 pdf_file.seek(0)
-                
+
                 # Sign PDF
-                signed_pdf = pdf_signer.sign_pdf(pdf_file, stamp_image, (pos_x, pos_y))
+                signed_pdf = pdf_signer.sign_pdf(
+                    pdf_file,
+                    stamp_image,
+                    position,
+                    smart_pos,
+                    prefer_last_page,
+                )
                 
                 if signed_pdf:
                     signed_files.append({
