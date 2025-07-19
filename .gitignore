@@ -1,16 +1,54 @@
-# Byte-compiled / optimized files
+﻿# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Streamlit and temporary files
-*.png
-*.pfx
-*.p12
-temp*
+# Virtual Environment
+venv/
+env/
+ENV/
 
-# OS-specific files
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
 
-# History log
-signature_history.json
+# Streamlit
+.streamlit/secrets.toml
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Certificates (for security)
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Test files
+test_*.pdf
+sample_*.pdf

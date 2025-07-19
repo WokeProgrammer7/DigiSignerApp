@@ -1,5 +1,7 @@
-streamlit
-PyMuPDF
-pyhanko
-cryptography
-Pillow
+﻿streamlit>=1.28.0
+pyhanko>=0.20.0
+pypdf>=3.0.0
+pillow>=9.0.0
+pymupdf>=1.23.0
+python-pkcs11>=0.7.0
+cryptography>=41.0.0
